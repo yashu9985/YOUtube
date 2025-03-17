@@ -1,84 +1,119 @@
 import os
-import asyncio
 import yt_dlp
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.utils import executor
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, CallbackContext, MessageHandler, Filters, CallbackQueryHandler
 
-# Replace with your BotFather token
-BOT_TOKEN = "YOUR_BOT_TOKEN"
+# Replace this with your actual bot token from BotFather
+BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
+# Function to start the bot
+def start(update: Update, context: CallbackContext) -> None:
+    update.message.reply_text("Send me a YouTube link, and I'll fetch the download options for you!")
 
-# Start Command
-@dp.message_handler(commands=['start'])
-async def start_command(message: types.Message):
-    welcome_text = "🎥 **Welcome to YT Video Downloader Bot!**\n\n" \
-                   "📥 Send me a **YouTube link**, and I will provide you with download options!"
-    await message.reply(welcome_text)
+# Function to handle YouTube links
+def handle_message(update: Update, context: CallbackContext) -> None:
+    url = update.message.text
 
-# Process YouTube Link
-@dp.message_handler(lambda message: message.text.startswith("http"))
-async def process_youtube_link(message: types.Message):
-    url = message.text
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    
-    # Add format selection buttons
-    keyboard.add(
-        InlineKeyboardButton("📺 MP4 (720p)", callback_data=f"mp4_720p|{url}"),
-        InlineKeyboardButton("📺 MP4 (360p)", callback_data=f"mp4_360p|{url}"),
-        InlineKeyboardButton("🎵 MP3 (Audio)", callback_data=f"mp3|{url}")
-    )
-    
-    await message.reply("🔽 **Select download format:**", reply_markup=keyboard)
+    # Validate if it's a YouTube link
+    if "youtube.com" in url or "youtu.be" in url:
+        update.message.reply_text("Fetching video details...")
 
-# Callback Query Handler for Download
-@dp.callback_query_handler(lambda call: call.data.startswith("mp4") or call.data.startswith("mp3"))
-async def download_video(call: types.CallbackQuery):
-    format_type, url = call.data.split("|")
-    
-    await call.message.edit_text("⏳ **Downloading... Please wait!**")
-    
-    ydl_opts = {
-        'format': 'best',
-        'outtmpl': 'downloaded_video.%(ext)s',
-        'quiet': True
-    }
-    
-    # Change format options based on selection
-    if format_type == "mp4_720p":
-        ydl_opts['format'] = 'bestvideo[height<=720]+bestaudio/best'
-    elif format_type == "mp4_360p":
-        ydl_opts['format'] = 'bestvideo[height<=360]+bestaudio/best'
-    elif format_type == "mp3":
-        ydl_opts['format'] = 'bestaudio'
-        ydl_opts['postprocessors'] = [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}]
-    
-    try:
+        # Extract available formats
+        ydl_opts = {
+            "quiet": True,
+            "noprogress": True,
+            "simulate": True,
+            "format": "best",
+        }
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            try:
+                info = ydl.extract_info(url, download=False)
+                formats = info.get("formats", [])
+                
+                keyboard = []
+                for fmt in formats:
+                    fmt_id = fmt.get("format_id")
+                    ext = fmt.get("ext")
+                    res = fmt.get("height", "Unknown")
+                    
+                    if ext in ["mp4", "webm"] and res != "Unknown":
+                        keyboard.append([InlineKeyboardButton(f"{res}p ({ext})", callback_data=f"video|{url}|{fmt_id}")])
+                
+                keyboard.append([InlineKeyboardButton("Audio (MP3)", callback_data=f"audio|{url}")])
+                
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                update.message.reply_text("Choose your format:", reply_markup=reply_markup)
+            
+            except Exception as e:
+                update.message.reply_text("Failed to fetch video details. Please try another link.")
+    else:
+        update.message.reply_text("Please send a valid YouTube link.")
+
+# Function to handle button clicks
+def button_callback(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    query.answer()
+
+    data = query.data.split("|")
+    option, url = data[0], data[1]
+
+    if option == "video":
+        fmt_id = data[2]
+        file_path = download_video(url, fmt_id)
+    elif option == "audio":
+        file_path = download_audio(url)
+
+    if file_path:
+        query.message.reply_document(document=open(file_path, "rb"))
+        os.remove(file_path)  # Delete after sending
+    else:
+        query.message.reply_text("Download failed. Try again.")
+
+# Function to download video
+def download_video(url, fmt_id):
+    ydl_opts = {
+        "format": fmt_id,
+        "outtmpl": "downloads/video.%(ext)s",
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        try:
             ydl.download([url])
-        
-        # Find the downloaded file
-        for file in os.listdir():
-            if file.startswith("downloaded_video"):
-                file_path = file
-                break
+            return "downloads/video.mp4"
+        except Exception as e:
+            return None
 
-        # Send the downloaded file
-        with open(file_path, "rb") as video_file:
-            if format_type == "mp3":
-                await call.message.answer_document(video_file, caption="🎵 Here is your MP3 file!")
-            else:
-                await call.message.answer_video(video_file, caption="🎬 Here is your video!")
-        
-        # Clean up
-        os.remove(file_path)
-    except Exception as e:
-        await call.message.answer(f"⚠️ **Error:** {str(e)}")
-    
-    await call.message.edit_text("✅ **Download completed!**")
+# Function to download audio
+def download_audio(url):
+    ydl_opts = {
+        "format": "bestaudio",
+        "outtmpl": "downloads/audio.%(ext)s",
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }],
+    }
 
-# Run the bot
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        try:
+            ydl.download([url])
+            return "downloads/audio.mp3"
+        except Exception as e:
+            return None
+
+# Main function to run the bot
+def main():
+    updater = Updater(BOT_TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    dp.add_handler(CallbackQueryHandler(button_callback))
+
+    updater.start_polling()
+    updater.idle()
+
 if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True)
+    main()
