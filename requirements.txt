@@ -2,4 +2,5 @@ python-telegram-bot
 requests
 pytube
 yt-dlp
+aiogram
 
