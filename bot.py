@@ -1,119 +1,54 @@
-import os
-import yt_dlp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackContext, MessageHandler, Filters, CallbackQueryHandler
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    filters, CallbackQueryHandler, ContextTypes
+)
 
-# Replace this with your actual bot token from BotFather
-BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+TOKEN = "YOUR_BOT_TOKEN"
 
-# Function to start the bot
-def start(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text("Send me a YouTube link, and I'll fetch the download options for you!")
+# Start Command
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Send me a YouTube link!")
 
-# Function to handle YouTube links
-def handle_message(update: Update, context: CallbackContext) -> None:
-    url = update.message.text
+# Handle YouTube Links
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
 
-    # Validate if it's a YouTube link
-    if "youtube.com" in url or "youtu.be" in url:
-        update.message.reply_text("Fetching video details...")
-
-        # Extract available formats
-        ydl_opts = {
-            "quiet": True,
-            "noprogress": True,
-            "simulate": True,
-            "format": "best",
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                info = ydl.extract_info(url, download=False)
-                formats = info.get("formats", [])
-                
-                keyboard = []
-                for fmt in formats:
-                    fmt_id = fmt.get("format_id")
-                    ext = fmt.get("ext")
-                    res = fmt.get("height", "Unknown")
-                    
-                    if ext in ["mp4", "webm"] and res != "Unknown":
-                        keyboard.append([InlineKeyboardButton(f"{res}p ({ext})", callback_data=f"video|{url}|{fmt_id}")])
-                
-                keyboard.append([InlineKeyboardButton("Audio (MP3)", callback_data=f"audio|{url}")])
-                
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                update.message.reply_text("Choose your format:", reply_markup=reply_markup)
-            
-            except Exception as e:
-                update.message.reply_text("Failed to fetch video details. Please try another link.")
+    if "youtube.com" in text or "youtu.be" in text:
+        keyboard = [
+            [InlineKeyboardButton("MP4", callback_data=f"mp4_{text}"),
+             InlineKeyboardButton("MP3", callback_data=f"mp3_{text}")],
+            [InlineKeyboardButton("Select Resolution", callback_data=f"res_{text}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("Choose download option:", reply_markup=reply_markup)
     else:
-        update.message.reply_text("Please send a valid YouTube link.")
+        await update.message.reply_text("Please send a valid YouTube link.")
 
-# Function to handle button clicks
-def button_callback(update: Update, context: CallbackContext) -> None:
+# Handle Button Clicks
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    query.answer()
+    await query.answer()
+    data = query.data.split("_", 1)
 
-    data = query.data.split("|")
-    option, url = data[0], data[1]
+    if data[0] == "mp4":
+        await query.message.reply_text(f"Downloading MP4: {data[1]}")
+    elif data[0] == "mp3":
+        await query.message.reply_text(f"Downloading MP3: {data[1]}")
+    elif data[0] == "res":
+        keyboard = [
+            [InlineKeyboardButton("1080p", callback_data=f"1080p_{data[1]}"),
+             InlineKeyboardButton("720p", callback_data=f"720p_{data[1]}")],
+            [InlineKeyboardButton("480p", callback_data=f"480p_{data[1]}"),
+             InlineKeyboardButton("360p", callback_data=f"360p_{data[1]}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text("Choose resolution:", reply_markup=reply_markup)
 
-    if option == "video":
-        fmt_id = data[2]
-        file_path = download_video(url, fmt_id)
-    elif option == "audio":
-        file_path = download_audio(url)
+# Run the Bot
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+app.add_handler(CallbackQueryHandler(button_callback))
 
-    if file_path:
-        query.message.reply_document(document=open(file_path, "rb"))
-        os.remove(file_path)  # Delete after sending
-    else:
-        query.message.reply_text("Download failed. Try again.")
-
-# Function to download video
-def download_video(url, fmt_id):
-    ydl_opts = {
-        "format": fmt_id,
-        "outtmpl": "downloads/video.%(ext)s",
-    }
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        try:
-            ydl.download([url])
-            return "downloads/video.mp4"
-        except Exception as e:
-            return None
-
-# Function to download audio
-def download_audio(url):
-    ydl_opts = {
-        "format": "bestaudio",
-        "outtmpl": "downloads/audio.%(ext)s",
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "192",
-        }],
-    }
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        try:
-            ydl.download([url])
-            return "downloads/audio.mp3"
-        except Exception as e:
-            return None
-
-# Main function to run the bot
-def main():
-    updater = Updater(BOT_TOKEN, use_context=True)
-    dp = updater.dispatcher
-
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-    dp.add_handler(CallbackQueryHandler(button_callback))
-
-    updater.start_polling()
-    updater.idle()
-
-if __name__ == "__main__":
-    main()
+app.run_polling()
