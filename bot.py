@@ -1,54 +1,79 @@
+import os
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler,
-    filters, CallbackQueryHandler, ContextTypes
-)
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from pytube import YouTube
+from moviepy.editor import VideoFileClip
 
-TOKEN = "YOUR_BOT_TOKEN"
+# Enable logging
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Start Command
+# Telegram Bot Token
+TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+
+# Command to start the bot
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Send me a YouTube link!")
+    await update.message.reply_text("Welcome! Send me a YouTube link to download the video or audio.")
 
-# Handle YouTube Links
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-
-    if "youtube.com" in text or "youtu.be" in text:
-        keyboard = [
-            [InlineKeyboardButton("MP4", callback_data=f"mp4_{text}"),
-             InlineKeyboardButton("MP3", callback_data=f"mp3_{text}")],
-            [InlineKeyboardButton("Select Resolution", callback_data=f"res_{text}")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("Choose download option:", reply_markup=reply_markup)
-    else:
+# Handle YouTube link
+async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    url = update.message.text
+    if "youtube.com" not in url and "youtu.be" not in url:
         await update.message.reply_text("Please send a valid YouTube link.")
+        return
 
-# Handle Button Clicks
+    keyboard = [
+        [InlineKeyboardButton("MP3", callback_data=f"mp3_{url}")],
+        [InlineKeyboardButton("MP4", callback_data=f"mp4_{url}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Choose format:", reply_markup=reply_markup)
+
+# Handle button callbacks
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data.split("_", 1)
 
-    if data[0] == "mp4":
-        await query.message.reply_text(f"Downloading MP4: {data[1]}")
-    elif data[0] == "mp3":
-        await query.message.reply_text(f"Downloading MP3: {data[1]}")
-    elif data[0] == "res":
-        keyboard = [
-            [InlineKeyboardButton("1080p", callback_data=f"1080p_{data[1]}"),
-             InlineKeyboardButton("720p", callback_data=f"720p_{data[1]}")],
-            [InlineKeyboardButton("480p", callback_data=f"480p_{data[1]}"),
-             InlineKeyboardButton("360p", callback_data=f"360p_{data[1]}")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.message.reply_text("Choose resolution:", reply_markup=reply_markup)
+    data = query.data
+    format_type, url = data.split("_", 1)
 
-# Run the Bot
-app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-app.add_handler(CallbackQueryHandler(button_callback))
+    try:
+        yt = YouTube(url)
+        if format_type == "mp3":
+            await query.edit_message_text("Downloading audio...")
+            audio_stream = yt.streams.filter(only_audio=True).first()
+            audio_file = audio_stream.download(output_path="downloads", filename="audio")
+            mp3_file = audio_file.replace(".mp4", ".mp3")
+            os.rename(audio_file, mp3_file)
+            await query.edit_message_text("Uploading audio...")
+            await context.bot.send_audio(chat_id=query.message.chat_id, audio=open(mp3_file, "rb"))
+            os.remove(mp3_file)
+        elif format_type == "mp4":
+            await query.edit_message_text("Downloading video...")
+            video_stream = yt.streams.get_highest_resolution()
+            video_file = video_stream.download(output_path="downloads")
+            await query.edit_message_text("Uploading video...")
+            await context.bot.send_video(chat_id=query.message.chat_id, video=open(video_file, "rb"))
+            os.remove(video_file)
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        await query.edit_message_text("Something went wrong. Please try again.")
 
-app.run_polling()
+# Main function to run the bot
+def main():
+    application = Application.builder().token(TOKEN).build()
+
+    # Add handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
+    application.add_handler(CallbackQueryHandler(button_callback))
+
+    # Start the bot
+    application.run_polling()
+
+if __name__ == "__main__":
+    # Create downloads directory if it doesn't exist
+    if not os.path.exists("downloads"):
+        os.makedirs("downloads")
+    main()
