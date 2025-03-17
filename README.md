@@ -1,20 +1,22 @@
-# FastTube - Telegram Bot
+# Telegram YouTube Downloader Bot
 
-FastTube is a Telegram bot that helps users interact with YouTube content through Telegram.
+This is a Telegram bot that allows users to download YouTube videos in different resolutions or as MP3 audio.
 
-## 🚀 Features
-- Fetches YouTube video details.
-- Downloads YouTube videos/audio.
-- Provides search functionality.
+## Features
+- Users send a YouTube link.
+- The bot fetches available formats (MP4, WebM, MP3).
+- Users select their desired format.
+- The bot downloads and sends the file.
 
-## 📦 Requirements
-- Python 3.8+
-- A Telegram bot token (from @BotFather)
-- Railway or any other deployment service.
+## Installation
+1. Clone this repository:git clone https://github.com/yourusername/youtube-telegram-bot.git cd youtube-telegram-bot
+2. Install dependencies:pip install python-telegram-bot yt-dlp
+3. Replace `YOUR_TELEGRAM_BOT_TOKEN` in `bot.py` with your actual bot token.
+4. Run the bot:python bot.py
+5. 
+## Deployment
+You can deploy this bot on **Railway, Heroku, or VPS**.
 
-## 🛠 Installation
+## License
+This project is open-source.
 
-1. **Clone the repository**  
-   ```sh
-   git clone https://github.com/yourusername/your-repo.git
-   cd your-repo
